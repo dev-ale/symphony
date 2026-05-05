@@ -36,6 +36,36 @@ help with the setup:
 
 ---
 
+## Changes from upstream
+
+This fork (`dev-ale/symphony`) tracks work on top of the initial
+[`openai/symphony`](https://github.com/openai/symphony) drop. Notable changes since the
+initial commit:
+
+- Move Elixir observability dashboard to Phoenix (#29)
+- Refactor config access around an Ecto schema
+- Align workflow config spec with schema behavior
+- Stabilize Symphony Elixir orchestration and policy handling
+- Add a real live Linear/Codex E2E target
+- Add SSH worker support to Symphony Elixir
+- Fix malformed JSON event from Codex message (#50)
+- Keep SSH retries in orchestrator (#54)
+- Pin GitHub Actions workflow references (#57)
+- Clarify Symphony service specification (#61)
+- Configure Codex app-server model via config
+
+### Contributors
+
+- Alex Kotliarskyi
+- Kevin Wang
+- mstrautmann-oai
+- Drew Hintz
+
+For the authoritative log, see `git log` or the
+[commit history](https://github.com/dev-ale/symphony/commits/main).
+
+---
+
 ## License
 
 This project is licensed under the [Apache License 2.0](LICENSE).
