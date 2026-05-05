@@ -554,6 +554,8 @@ defmodule SymphonyElixir.ExtensionsTest do
     refute html =~ "Transport"
     assert html =~ "status-badge-live"
     assert html =~ "status-badge-offline"
+    assert html =~ "status-badge-countdown"
+    assert html =~ "Next refresh in"
 
     updated_snapshot =
       put_in(snapshot.running, [
