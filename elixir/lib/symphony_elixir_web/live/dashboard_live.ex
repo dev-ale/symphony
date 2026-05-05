@@ -1,13 +1,16 @@
 defmodule SymphonyElixirWeb.DashboardLive do
   @moduledoc """
-  Live observability dashboard for Symphony.
+  Live observability dashboard for Symphony, including a kanban board grouped
+  by tracker state.
   """
 
   use Phoenix.LiveView, layout: {SymphonyElixirWeb.Layouts, :app}
 
   alias SymphonyElixir.Config
   alias SymphonyElixirWeb.{Endpoint, ObservabilityPubSub, Presenter}
+
   @runtime_tick_ms 1_000
+  @board_refresh_ms 30_000
 
   @impl true
   def mount(_params, _session, socket) do
@@ -23,6 +26,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
     if connected?(socket) do
       :ok = ObservabilityPubSub.subscribe()
       schedule_runtime_tick()
+      schedule_board_refresh()
     end
 
     {:ok, socket}
@@ -36,6 +40,16 @@ defmodule SymphonyElixirWeb.DashboardLive do
      socket
      |> assign(:now, DateTime.utc_now())
      |> assign(:refresh_ms, refresh_ms())}
+  end
+
+  @impl true
+  def handle_info(:board_refresh, socket) do
+    schedule_board_refresh()
+
+    {:noreply,
+     socket
+     |> assign(:payload, load_payload())
+     |> assign(:now, DateTime.utc_now())}
   end
 
   @impl true
@@ -61,10 +75,10 @@ defmodule SymphonyElixirWeb.DashboardLive do
               Symphony Observability
             </p>
             <h1 class="hero-title">
-              Operations Dashboard
+              Operations Board
             </h1>
             <p class="hero-copy">
-              Current state, retry pressure, token usage, and orchestration health for the active Symphony runtime.
+              Issues across tracker states, with live agent activity, retries, and token usage.
             </p>
           </div>
 
@@ -122,151 +136,92 @@ defmodule SymphonyElixirWeb.DashboardLive do
           </article>
         </section>
 
-        <section class="section-card">
-          <div class="section-header">
-            <div>
-              <h2 class="section-title">Rate limits</h2>
-              <p class="section-copy">Latest upstream rate-limit snapshot, when available.</p>
-            </div>
-          </div>
+        <%= if board = @payload[:board] do %>
+          <%= if board.tracker_error do %>
+            <section class="error-card">
+              <h2 class="error-title">Tracker unavailable</h2>
+              <p class="error-copy">
+                <strong><%= board.tracker_error.code %>:</strong> <%= board.tracker_error.message %>
+              </p>
+            </section>
+          <% end %>
 
-          <pre class="code-panel"><%= pretty_value(@payload.rate_limits) %></pre>
-        </section>
+          <section class="board-shell">
+            <div class="board-grid">
+              <article :for={column <- board.columns} class={"board-column board-column-" <> column.kind}>
+                <header class="board-column-header">
+                  <h2 class="board-column-title"><%= column.name %></h2>
+                  <span class="board-column-count numeric"><%= length(column.cards) %></span>
+                </header>
 
-        <section class="section-card">
-          <div class="section-header">
-            <div>
-              <h2 class="section-title">Running sessions</h2>
-              <p class="section-copy">Active issues, last known agent activity, and token usage.</p>
-            </div>
-          </div>
-
-          <%= if @payload.running == [] do %>
-            <p class="empty-state">No active sessions.</p>
-          <% else %>
-            <div class="table-wrap">
-              <table class="data-table data-table-running">
-                <colgroup>
-                  <col style="width: 12rem;" />
-                  <col style="width: 8rem;" />
-                  <col style="width: 7.5rem;" />
-                  <col style="width: 8.5rem;" />
-                  <col />
-                  <col style="width: 10rem;" />
-                </colgroup>
-                <thead>
-                  <tr>
-                    <th>Issue</th>
-                    <th>State</th>
-                    <th>Session</th>
-                    <th>Runtime / turns</th>
-                    <th>Codex update</th>
-                    <th>Tokens</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr :for={entry <- @payload.running}>
-                    <td>
-                      <div class="issue-stack">
-                        <span class="issue-id"><%= entry.issue_identifier %></span>
-                        <a class="issue-link" href={"/api/v1/#{entry.issue_identifier}"}>JSON details</a>
-                      </div>
-                    </td>
-                    <td>
-                      <span class={state_badge_class(entry.state)}>
-                        <%= entry.state %>
-                      </span>
-                    </td>
-                    <td>
-                      <div class="session-stack">
-                        <%= if entry.session_id do %>
-                          <button
-                            type="button"
-                            class="subtle-button"
-                            data-label="Copy ID"
-                            data-copy={entry.session_id}
-                            onclick="navigator.clipboard.writeText(this.dataset.copy); this.textContent = 'Copied'; clearTimeout(this._copyTimer); this._copyTimer = setTimeout(() => { this.textContent = this.dataset.label }, 1200);"
-                          >
-                            Copy ID
-                          </button>
+                <%= if column.cards == [] do %>
+                  <p class="board-column-empty">No issues.</p>
+                <% else %>
+                  <ul class="board-card-list">
+                    <li :for={card <- column.cards} class={"board-card board-card-" <> card.status}>
+                      <header class="board-card-header">
+                        <%= if card.url do %>
+                          <a class="board-card-id" href={card.url} target="_blank" rel="noopener noreferrer">
+                            <%= card.issue_identifier %>
+                          </a>
                         <% else %>
-                          <span class="muted">n/a</span>
+                          <span class="board-card-id"><%= card.issue_identifier %></span>
                         <% end %>
-                      </div>
-                    </td>
-                    <td class="numeric"><%= format_runtime_and_turns(entry.started_at, entry.turn_count, @now) %></td>
-                    <td>
-                      <div class="detail-stack">
-                        <span
-                          class="event-text"
-                          title={entry.last_message || to_string(entry.last_event || "n/a")}
-                        ><%= entry.last_message || to_string(entry.last_event || "n/a") %></span>
-                        <span class="muted event-meta">
-                          <%= entry.last_event || "n/a" %>
-                          <%= if entry.last_event_at do %>
-                            · <span class="mono numeric"><%= entry.last_event_at %></span>
-                          <% end %>
+                        <span class={"board-card-status board-card-status-" <> card.status}>
+                          <%= card.status %>
                         </span>
-                      </div>
-                    </td>
-                    <td>
-                      <div class="token-stack numeric">
-                        <span>Total: <%= format_int(entry.tokens.total_tokens) %></span>
-                        <span class="muted">In <%= format_int(entry.tokens.input_tokens) %> / Out <%= format_int(entry.tokens.output_tokens) %></span>
-                      </div>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          <% end %>
-        </section>
+                      </header>
+                      <p class="board-card-title"><%= card.title || "(untitled)" %></p>
 
-        <section class="section-card">
-          <div class="section-header">
-            <div>
-              <h2 class="section-title">Retry queue</h2>
-              <p class="section-copy">Issues waiting for the next retry window.</p>
-            </div>
-          </div>
+                      <%= if card.running do %>
+                        <dl class="board-card-stats numeric">
+                          <div>
+                            <dt>Runtime</dt>
+                            <dd><%= format_runtime_and_turns(card.running.started_at, card.running.turn_count, @now) %></dd>
+                          </div>
+                          <div>
+                            <dt>Tokens</dt>
+                            <dd><%= format_int(card.running.tokens.total_tokens) %></dd>
+                          </div>
+                        </dl>
+                        <p class="board-card-event" title={card.running.last_message || to_string(card.running.last_event || "")}>
+                          <%= card.running.last_message || to_string(card.running.last_event || "") %>
+                        </p>
+                      <% end %>
 
-          <%= if @payload.retrying == [] do %>
-            <p class="empty-state">No issues are currently backing off.</p>
-          <% else %>
-            <div class="table-wrap">
-              <table class="data-table" style="min-width: 680px;">
-                <thead>
-                  <tr>
-                    <th>Issue</th>
-                    <th>Attempt</th>
-                    <th>Due at</th>
-                    <th>Error</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr :for={entry <- @payload.retrying}>
-                    <td>
-                      <div class="issue-stack">
-                        <span class="issue-id"><%= entry.issue_identifier %></span>
-                        <a class="issue-link" href={"/api/v1/#{entry.issue_identifier}"}>JSON details</a>
-                      </div>
-                    </td>
-                    <td><%= entry.attempt %></td>
-                    <td class="mono"><%= entry.due_at || "n/a" %></td>
-                    <td><%= entry.error || "n/a" %></td>
-                  </tr>
-                </tbody>
-              </table>
+                      <%= if card.retry do %>
+                        <dl class="board-card-stats numeric">
+                          <div>
+                            <dt>Attempt</dt>
+                            <dd><%= card.retry.attempt %></dd>
+                          </div>
+                          <div>
+                            <dt>Due</dt>
+                            <dd class="mono"><%= card.retry.due_at || "n/a" %></dd>
+                          </div>
+                        </dl>
+                        <%= if card.retry.error do %>
+                          <p class="board-card-event"><%= card.retry.error %></p>
+                        <% end %>
+                      <% end %>
+
+                      <footer class="board-card-footer">
+                        <span class="muted">Updated <%= format_age(card.updated_at, @now) %></span>
+                      </footer>
+                    </li>
+                  </ul>
+                <% end %>
+              </article>
             </div>
-          <% end %>
-        </section>
+          </section>
+        <% end %>
       <% end %>
     </section>
     """
   end
 
   defp load_payload do
-    Presenter.state_payload(orchestrator(), snapshot_timeout_ms())
+    Presenter.board_payload(orchestrator(), snapshot_timeout_ms())
   end
 
   defp orchestrator do
@@ -302,6 +257,24 @@ defmodule SymphonyElixirWeb.DashboardLive do
     "#{mins}m #{secs}s"
   end
 
+  defp format_age(nil, _now), do: "n/a"
+
+  defp format_age(iso, %DateTime{} = now) when is_binary(iso) do
+    case DateTime.from_iso8601(iso) do
+      {:ok, dt, _} ->
+        seconds = DateTime.diff(now, dt, :second)
+        humanize_age(seconds)
+
+      _ ->
+        "n/a"
+    end
+  end
+
+  defp humanize_age(seconds) when seconds < 60, do: "#{max(seconds, 0)}s ago"
+  defp humanize_age(seconds) when seconds < 3_600, do: "#{div(seconds, 60)}m ago"
+  defp humanize_age(seconds) when seconds < 86_400, do: "#{div(seconds, 3_600)}h ago"
+  defp humanize_age(seconds), do: "#{div(seconds, 86_400)}d ago"
+
   defp runtime_seconds_from_started_at(%DateTime{} = started_at, %DateTime{} = now) do
     DateTime.diff(now, started_at, :second)
   end
@@ -325,20 +298,12 @@ defmodule SymphonyElixirWeb.DashboardLive do
 
   defp format_int(_value), do: "n/a"
 
-  defp state_badge_class(state) do
-    base = "state-badge"
-    normalized = state |> to_string() |> String.downcase()
-
-    cond do
-      String.contains?(normalized, ["progress", "running", "active"]) -> "#{base} state-badge-active"
-      String.contains?(normalized, ["blocked", "error", "failed"]) -> "#{base} state-badge-danger"
-      String.contains?(normalized, ["todo", "queued", "pending", "retry"]) -> "#{base} state-badge-warning"
-      true -> base
-    end
-  end
-
   defp schedule_runtime_tick do
     Process.send_after(self(), :runtime_tick, @runtime_tick_ms)
+  end
+
+  defp schedule_board_refresh do
+    Process.send_after(self(), :board_refresh, @board_refresh_ms)
   end
 
   defp refresh_ms do
@@ -361,7 +326,4 @@ defmodule SymphonyElixirWeb.DashboardLive do
 
   defp format_countdown(seconds) when is_integer(seconds) and seconds >= 0, do: "#{seconds}s"
   defp format_countdown(_), do: "0s"
-
-  defp pretty_value(nil), do: "n/a"
-  defp pretty_value(value), do: inspect(value, pretty: true, limit: :infinity)
 end

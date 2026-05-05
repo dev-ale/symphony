@@ -3,7 +3,7 @@ defmodule SymphonyElixirWeb.Presenter do
   Shared projections for the observability API and dashboard.
   """
 
-  alias SymphonyElixir.{Config, Orchestrator, StatusDashboard}
+  alias SymphonyElixir.{Config, Linear.Issue, Orchestrator, StatusDashboard, Tracker}
 
   @spec state_payload(GenServer.name(), timeout()) :: map()
   def state_payload(orchestrator, snapshot_timeout_ms) do
@@ -29,6 +29,94 @@ defmodule SymphonyElixirWeb.Presenter do
       :unavailable ->
         %{generated_at: generated_at, error: %{code: "snapshot_unavailable", message: "Snapshot unavailable"}}
     end
+  end
+
+  @spec board_payload(GenServer.name(), timeout()) :: map()
+  def board_payload(orchestrator, snapshot_timeout_ms) do
+    snapshot_payload = state_payload(orchestrator, snapshot_timeout_ms)
+    tracker_settings = Config.settings!().tracker
+    column_states = tracker_settings.active_states ++ tracker_settings.terminal_states
+
+    {tracker_issues, tracker_error} =
+      case Tracker.fetch_issues_by_states(column_states) do
+        {:ok, issues} -> {issues, nil}
+        {:error, reason} -> {[], format_tracker_error(reason)}
+      end
+
+    running_by_id = index_by_identifier(Map.get(snapshot_payload, :running, []))
+    retrying_by_id = index_by_identifier(Map.get(snapshot_payload, :retrying, []))
+    seen_identifiers = MapSet.new(tracker_issues, & &1.identifier)
+
+    tracker_cards =
+      Enum.map(tracker_issues, fn %Issue{} = issue ->
+        running = Map.get(running_by_id, issue.identifier)
+        retry = Map.get(retrying_by_id, issue.identifier)
+        card_for_issue(issue, running, retry)
+      end)
+
+    runtime_cards =
+      Enum.flat_map(Map.merge(running_by_id, retrying_by_id), fn {identifier, _} ->
+        if MapSet.member?(seen_identifiers, identifier) do
+          []
+        else
+          [
+            card_from_runtime_only(
+              identifier,
+              Map.get(running_by_id, identifier),
+              Map.get(retrying_by_id, identifier)
+            )
+          ]
+        end
+      end)
+
+    cards = tracker_cards ++ runtime_cards
+
+    column_states_unique = Enum.uniq(column_states)
+    known_normalized = MapSet.new(column_states_unique, &normalize_state/1)
+
+    columns =
+      Enum.map(column_states_unique, fn state_name ->
+        normalized = normalize_state(state_name)
+
+        column_cards =
+          cards
+          |> Enum.filter(&(&1.state_normalized == normalized))
+          |> Enum.sort_by(&card_sort_key/1, :asc)
+
+        %{
+          name: state_name,
+          slug: state_slug(state_name),
+          kind: column_kind(state_name, tracker_settings),
+          cards: column_cards
+        }
+      end)
+
+    other_cards =
+      cards
+      |> Enum.reject(&MapSet.member?(known_normalized, &1.state_normalized))
+      |> Enum.sort_by(&card_sort_key/1, :asc)
+
+    columns =
+      if other_cards == [] do
+        columns
+      else
+        columns ++
+          [
+            %{
+              name: "Other",
+              slug: "other",
+              kind: "other",
+              cards: other_cards
+            }
+          ]
+      end
+
+    Map.merge(snapshot_payload, %{
+      board: %{
+        columns: columns,
+        tracker_error: tracker_error
+      }
+    })
   end
 
   @spec issue_payload(String.t(), GenServer.name(), timeout()) :: {:ok, map()} | {:error, :issue_not_found}
@@ -58,6 +146,109 @@ defmodule SymphonyElixirWeb.Presenter do
       payload ->
         {:ok, Map.update!(payload, :requested_at, &DateTime.to_iso8601/1)}
     end
+  end
+
+  defp index_by_identifier(entries) when is_list(entries) do
+    Enum.reduce(entries, %{}, fn entry, acc ->
+      case Map.get(entry, :issue_identifier) do
+        nil -> acc
+        identifier -> Map.put(acc, identifier, entry)
+      end
+    end)
+  end
+
+  defp card_for_issue(%Issue{} = issue, running, retry) do
+    state_name = issue.state || ""
+
+    %{
+      issue_id: issue.id,
+      issue_identifier: issue.identifier,
+      title: issue.title,
+      url: issue.url,
+      state: state_name,
+      state_normalized: normalize_state(state_name),
+      labels: issue.labels,
+      updated_at: iso8601(issue.updated_at),
+      created_at: iso8601(issue.created_at),
+      running: running,
+      retry: retry,
+      status: card_status(running, retry)
+    }
+  end
+
+  defp card_from_runtime_only(identifier, running, retry) do
+    state_name = (running && running.state) || ""
+
+    %{
+      issue_id: (running && running.issue_id) || (retry && retry.issue_id),
+      issue_identifier: identifier,
+      title: nil,
+      url: nil,
+      state: state_name,
+      state_normalized: normalize_state(state_name),
+      labels: [],
+      updated_at: nil,
+      created_at: nil,
+      running: running,
+      retry: retry,
+      status: card_status(running, retry)
+    }
+  end
+
+  defp card_status(nil, nil), do: "idle"
+  defp card_status(_running, nil), do: "running"
+  defp card_status(nil, _retry), do: "retrying"
+  defp card_status(_running, _retry), do: "running"
+
+  defp card_sort_key(card) do
+    # Active sessions first, then by recency.
+    priority =
+      case card.status do
+        "running" -> 0
+        "retrying" -> 1
+        _ -> 2
+      end
+
+    {priority, -recency_score(card.updated_at)}
+  end
+
+  defp recency_score(nil), do: 0
+
+  defp recency_score(iso) when is_binary(iso) do
+    case DateTime.from_iso8601(iso) do
+      {:ok, dt, _} -> DateTime.to_unix(dt)
+      _ -> 0
+    end
+  end
+
+  defp normalize_state(state) when is_binary(state),
+    do: state |> String.trim() |> String.downcase()
+
+  defp normalize_state(_), do: ""
+
+  defp state_slug(state_name) when is_binary(state_name) do
+    state_name
+    |> String.downcase()
+    |> String.replace(~r/[^a-z0-9]+/, "-")
+    |> String.trim("-")
+  end
+
+  defp state_slug(_), do: ""
+
+  defp column_kind(state_name, tracker_settings) do
+    normalized = normalize_state(state_name)
+    active = MapSet.new(Enum.map(tracker_settings.active_states, &normalize_state/1))
+    terminal = MapSet.new(Enum.map(tracker_settings.terminal_states, &normalize_state/1))
+
+    cond do
+      MapSet.member?(active, normalized) -> "active"
+      MapSet.member?(terminal, normalized) -> "terminal"
+      true -> "other"
+    end
+  end
+
+  defp format_tracker_error(reason) do
+    %{code: "tracker_unavailable", message: inspect(reason)}
   end
 
   defp issue_payload_body(issue_identifier, running, retry) do
