@@ -65,6 +65,7 @@ since then, grouped by area:
 - Kevin Wang
 - mstrautmann-oai (Mathias Strautmann)
 - Drew Hintz
+- Alejandro Garcia
 
 For the authoritative log, see `git log` or the
 [commit history](https://github.com/dev-ale/symphony/commits/main).
