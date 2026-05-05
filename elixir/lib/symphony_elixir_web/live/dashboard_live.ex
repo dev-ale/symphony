@@ -348,6 +348,8 @@ defmodule SymphonyElixirWeb.DashboardLive do
   end
 
   @doc false
+  @spec next_refresh_seconds(DateTime.t() | term(), pos_integer() | term(), DateTime.t() | term()) ::
+          non_neg_integer()
   def next_refresh_seconds(%DateTime{} = last_refresh_at, refresh_ms, %DateTime{} = now)
       when is_integer(refresh_ms) and refresh_ms > 0 do
     elapsed_ms = DateTime.diff(now, last_refresh_at, :millisecond)
