@@ -539,15 +539,15 @@ defmodule SymphonyElixir.ExtensionsTest do
     start_test_endpoint(orchestrator: orchestrator_name, snapshot_timeout_ms: 50)
 
     {:ok, view, html} = live(build_conn(), "/")
-    assert html =~ "Operations Dashboard"
+    assert html =~ "Operations Board"
     assert html =~ "MT-HTTP"
     assert html =~ "MT-RETRY"
     assert html =~ "rendered"
     assert html =~ "Runtime"
     assert html =~ "Live"
     assert html =~ "Offline"
-    assert html =~ "Copy ID"
-    assert html =~ "Codex update"
+    assert html =~ "board-grid"
+    assert html =~ "board-column"
     refute html =~ "data-runtime-clock="
     refute html =~ "setInterval(refreshRuntimeClocks"
     refute html =~ "Refresh now"
