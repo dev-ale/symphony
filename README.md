@@ -36,6 +36,42 @@ help with the setup:
 
 ---
 
+## Changes from upstream
+
+This fork (`dev-ale/symphony`) tracks work on top of the initial
+[`openai/symphony`](https://github.com/openai/symphony) drop (commit `fa75ec6`). Changes
+since then, grouped by area:
+
+### Elixir reference implementation
+
+- Move observability dashboard to Phoenix ([b0e0ff0](https://github.com/dev-ale/symphony/commit/b0e0ff0), #29)
+- Refactor config access around an Ecto schema ([e65f5ee](https://github.com/dev-ale/symphony/commit/e65f5ee))
+- Align workflow config spec with schema behavior ([8afebb3](https://github.com/dev-ale/symphony/commit/8afebb3))
+- Stabilize orchestration and policy handling ([c9ec3f1](https://github.com/dev-ale/symphony/commit/c9ec3f1))
+- Add a real live Linear/Codex E2E target ([b1863e8](https://github.com/dev-ale/symphony/commit/b1863e8))
+- Add SSH worker support ([ff65c7c](https://github.com/dev-ale/symphony/commit/ff65c7c))
+- Keep SSH retries in orchestrator ([a164593](https://github.com/dev-ale/symphony/commit/a164593), #54)
+- Fix malformed JSON event from Codex message ([1f86bac](https://github.com/dev-ale/symphony/commit/1f86bac), #50)
+- Configure Codex app-server model via config ([58cf97d](https://github.com/dev-ale/symphony/commit/58cf97d))
+
+### Spec & CI
+
+- Clarify Symphony service specification ([eaa457d](https://github.com/dev-ale/symphony/commit/eaa457d), #61)
+- Pin GitHub Actions workflow references ([9e89dd9](https://github.com/dev-ale/symphony/commit/9e89dd9), #57)
+
+### Contributors
+
+- Alex Kotliarskyi
+- Kevin Wang
+- mstrautmann-oai (Mathias Strautmann)
+- Drew Hintz
+- Alejandro Garcia
+
+For the authoritative log, see `git log` or the
+[commit history](https://github.com/dev-ale/symphony/commits/main).
+
+---
+
 ## License
 
 This project is licensed under the [Apache License 2.0](LICENSE).
