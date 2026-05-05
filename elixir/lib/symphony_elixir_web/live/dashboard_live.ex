@@ -6,6 +6,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
 
   use Phoenix.LiveView, layout: {SymphonyElixirWeb.Layouts, :app}
 
+  alias SymphonyElixir.Config
   alias SymphonyElixirWeb.{Endpoint, ObservabilityPubSub, Presenter}
 
   @runtime_tick_ms 1_000
@@ -13,10 +14,14 @@ defmodule SymphonyElixirWeb.DashboardLive do
 
   @impl true
   def mount(_params, _session, socket) do
+    now = DateTime.utc_now()
+
     socket =
       socket
       |> assign(:payload, load_payload())
-      |> assign(:now, DateTime.utc_now())
+      |> assign(:now, now)
+      |> assign(:refresh_ms, refresh_ms())
+      |> assign(:last_refresh_at, now)
 
     if connected?(socket) do
       :ok = ObservabilityPubSub.subscribe()
@@ -30,7 +35,11 @@ defmodule SymphonyElixirWeb.DashboardLive do
   @impl true
   def handle_info(:runtime_tick, socket) do
     schedule_runtime_tick()
-    {:noreply, assign(socket, :now, DateTime.utc_now())}
+
+    {:noreply,
+     socket
+     |> assign(:now, DateTime.utc_now())
+     |> assign(:refresh_ms, refresh_ms())}
   end
 
   @impl true
@@ -45,10 +54,14 @@ defmodule SymphonyElixirWeb.DashboardLive do
 
   @impl true
   def handle_info(:observability_updated, socket) do
+    now = DateTime.utc_now()
+
     {:noreply,
      socket
      |> assign(:payload, load_payload())
-     |> assign(:now, DateTime.utc_now())}
+     |> assign(:now, now)
+     |> assign(:last_refresh_at, now)
+     |> assign(:refresh_ms, refresh_ms())}
   end
 
   @impl true
@@ -77,6 +90,9 @@ defmodule SymphonyElixirWeb.DashboardLive do
             <span class="status-badge status-badge-offline">
               <span class="status-badge-dot"></span>
               Offline
+            </span>
+            <span class="status-badge status-badge-countdown numeric" title="Time until the next data refresh pull.">
+              Next refresh in <%= format_countdown(next_refresh_seconds(@last_refresh_at, @refresh_ms, @now)) %>
             </span>
           </div>
         </div>
@@ -289,4 +305,25 @@ defmodule SymphonyElixirWeb.DashboardLive do
   defp schedule_board_refresh do
     Process.send_after(self(), :board_refresh, @board_refresh_ms)
   end
+
+  defp refresh_ms do
+    Config.settings!().observability.refresh_ms
+  rescue
+    _ -> 1_000
+  end
+
+  @doc false
+  @spec next_refresh_seconds(DateTime.t() | term(), pos_integer() | term(), DateTime.t() | term()) ::
+          non_neg_integer()
+  def next_refresh_seconds(%DateTime{} = last_refresh_at, refresh_ms, %DateTime{} = now)
+      when is_integer(refresh_ms) and refresh_ms > 0 do
+    elapsed_ms = DateTime.diff(now, last_refresh_at, :millisecond)
+    remaining_ms = max(refresh_ms - elapsed_ms, 0)
+    div(remaining_ms + 999, 1_000)
+  end
+
+  def next_refresh_seconds(_last_refresh_at, _refresh_ms, _now), do: 0
+
+  defp format_countdown(seconds) when is_integer(seconds) and seconds >= 0, do: "#{seconds}s"
+  defp format_countdown(_), do: "0s"
 end

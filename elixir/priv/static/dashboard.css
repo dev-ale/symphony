@@ -235,6 +235,13 @@ pre,
   display: none;
 }
 
+.status-badge-countdown {
+  background: var(--card-muted);
+  border-color: var(--line);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
 .metric-grid {
   display: grid;
   gap: 0.85rem;
